@@ -17,7 +17,7 @@ data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = "resources/lambda/react"
   output_path = "resources/lambda/out/reactapp.zip"
-  depends_on  = [aws_s3_bucket_object.upload_folder_prod]
+  depends_on  = [aws_s3_object.upload_folder_prod]
 }
 
 resource "aws_lambda_function" "react_lambda_app" {
@@ -3230,6 +3230,8 @@ resource "aws_s3_bucket_acl" "bucket_upload" {
 resource "aws_s3_bucket_policy" "allow_access_for_prod" {
   bucket = aws_s3_bucket.bucket_upload.id
   policy = data.aws_iam_policy_document.allow_get_access.json
+
+  depends_on = [ aws_s3_bucket_acl.bucket_upload ]
 }
 data "aws_iam_policy_document" "allow_get_access" {
   statement {
@@ -3259,18 +3261,19 @@ resource "aws_s3_bucket_cors_configuration" "bucket_upload" {
     allowed_methods = ["GET", "POST", "PUT"]
     allowed_origins = ["*"]
   }
+  depends_on = [aws_s3_bucket_acl.bucket_upload]
 }
 # Upload in production bucket
-resource "aws_s3_bucket_object" "upload_folder_prod" {
+
+resource "aws_s3_object" "upload_folder_prod" {
   for_each     = fileset("./resources/s3/webfiles/", "**")
   bucket       = aws_s3_bucket.bucket_upload.bucket
   key          = each.value
   acl          = "public-read"
   source       = "./resources/s3/webfiles/${each.value}"
   content_type = lookup(local.content_type_map, regex("\\.(?P<extension>[A-Za-z0-9]+)$", each.value).extension, "application/octet-stream")
-  depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_api_gw]
+  depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_api_gw, aws_s3_bucket_acl.bucket_upload]
 }
-
 
 
 #Development bucket
@@ -3314,6 +3317,8 @@ resource "aws_s3_bucket_acl" "dev" {
 resource "aws_s3_bucket_policy" "allow_access_for_dev" {
   bucket = aws_s3_bucket.dev.bucket
   policy = data.aws_iam_policy_document.allow_get_list_access.json
+
+  depends_on = [ aws_s3_bucket_acl.dev ]
 }
 data "aws_iam_policy_document" "allow_get_list_access" {
   statement {
@@ -3329,25 +3334,26 @@ data "aws_iam_policy_document" "allow_get_list_access" {
   }
 }
 # Upload in dev bucket
-resource "aws_s3_bucket_object" "upload_folder_dev" {
+
+resource "aws_s3_object" "upload_folder_dev" {
   for_each     = fileset("./resources/s3/webfiles/build/", "**")
   bucket       = aws_s3_bucket.dev.bucket
   key          = each.value
   acl          = "public-read"
   source       = "./resources/s3/webfiles/build/${each.value}"
   content_type = lookup(local.content_type_map, regex("\\.(?P<extension>[A-Za-z0-9]+)$", each.value).extension, "application/octet-stream")
-  depends_on   = [aws_s3_bucket.dev, null_resource.file_replacement_ec2_ip]
+  depends_on   = [aws_s3_bucket.dev, null_resource.file_replacement_ec2_ip, aws_s3_bucket_acl.dev]
 }
-resource "aws_s3_bucket_object" "upload_folder_dev_2" {
+
+resource "aws_s3_object" "upload_folder_dev_2" {
   for_each     = fileset("./resources/s3/shared/", "**")
   bucket       = aws_s3_bucket.dev.bucket
   key          = each.value
   acl          = "public-read"
   source       = "./resources/s3/shared/${each.value}"
   content_type = lookup(local.content_type_map, regex("\\.(?P<extension>[A-Za-z0-9]+)$", each.value).extension, "application/octet-stream")
-  depends_on   = [aws_s3_bucket.dev, null_resource.file_replacement_ec2_ip]
+  depends_on   = [aws_s3_bucket.dev, null_resource.file_replacement_ec2_ip, aws_s3_bucket_acl.dev]
 }
-
 
 
 /* Creating a S3 Bucket for ec2-files upload. */
@@ -3389,25 +3395,26 @@ resource "aws_s3_bucket_acl" "bucket_temp" {
 }
 
 /* Uploading all files to ec2-temp-bucket-ACCOUNT_ID bucket */
-resource "aws_s3_bucket_object" "upload_temp_object" {
+
+resource "aws_s3_object" "upload_temp_object" {
   for_each     = fileset("./resources/s3/webfiles/build/", "**")
   acl          = "public-read"
   bucket       = aws_s3_bucket.bucket_temp.bucket
   key          = each.value
   source       = "./resources/s3/webfiles/build/${each.value}"
   content_type = lookup(local.content_type_map, regex("\\.(?P<extension>[A-Za-z0-9]+)$", each.value).extension, "application/octet-stream")
-  depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_lambda_react]
+  depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_lambda_react, aws_s3_bucket_acl.bucket_temp]
 }
-resource "aws_s3_bucket_object" "upload_temp_object_2" {
+
+resource "aws_s3_object" "upload_temp_object_2" {
   for_each     = fileset("./resources/s3/shared/", "**")
   acl          = "public-read"
   bucket       = aws_s3_bucket.bucket_temp.bucket
   key          = each.value
   source       = "./resources/s3/shared/${each.value}"
   content_type = lookup(local.content_type_map, regex("\\.(?P<extension>[A-Za-z0-9]+)$", each.value).extension, "application/octet-stream")
-  depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_lambda_react]
+  depends_on   = [aws_s3_bucket.bucket_upload, null_resource.file_replacement_lambda_react, aws_s3_bucket_acl.bucket_temp]
 }
-
 /* Creating a S3 Bucket for Terraform state file upload. */
 resource "aws_s3_bucket" "bucket_tf_files" {
   bucket        = "do-not-delete-awsgoat-state-files-${data.aws_caller_identity.current.account_id}"
@@ -3600,7 +3607,7 @@ resource "aws_instance" "goat_instance" {
   }
   user_data = data.template_file.goat_script.rendered
   depends_on = [
-    aws_s3_bucket_object.upload_temp_object_2
+    aws_s3_object.upload_temp_object_2
   ]
 }
 
@@ -3700,7 +3707,7 @@ EOF
     interpreter = ["/bin/bash", "-c"]
   }
   depends_on = [
-    aws_s3_bucket_object.upload_temp_object, aws_s3_bucket_object.upload_temp_object_2, aws_s3_bucket_object.upload_folder_dev, aws_s3_bucket_object.upload_folder_dev_2, aws_s3_bucket_object.upload_folder_prod
+    aws_s3_object.upload_temp_object, aws_s3_object.upload_temp_object_2, aws_s3_object.upload_folder_dev, aws_s3_object.upload_folder_dev_2, aws_s3_object.upload_folder_prod
   ]
 }
 
